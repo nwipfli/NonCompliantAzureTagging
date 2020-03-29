@@ -1,0 +1,101 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json##",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "logAnalyticsWorkspaceResourceId" :{
+            "type": "string",
+            "metadata": {
+                "description": "Log Analytics workspace Resource Id"
+            },
+            "minLength": 121
+        },
+        "resourceGroupName" :{
+            "type": "string",
+            "metadata": {
+                "description": "Resource Group Name"
+            }
+        },
+        "actionGroupId" :{
+            "type": "string",
+            "metadata": {
+                "description": "Action Group Id"
+            }
+        }
+    },
+    "variables": {
+        "alertTag" : "[concat('hidden-link:', parameters('logAnalyticsWorkspaceResourceId'))]",
+        "alertSchedule":{
+            "Frequency": 5,
+            "Time": 5
+        },
+        "policyNonCompliantResourceAlertSettings":{
+            "name": "Policy Non Compliant Resource Group Alert",
+            "description": "Alerting when resource groups are deployed without the required tags",
+            "Query": "AzureActivity | where Category == 'Policy' and Level != 'Informational' | extend p=todynamic(Properties) | extend policies=todynamic(tostring(p.policies)) | mvexpand policy = policies | where p.isComplianceCheck == 'False'",
+            "SourceId": "[parameters('logAnalyticsWorkspaceResourceId')]",
+            "actiongroup": "[parameters('actionGroupId')]",
+            "Type":"ResultCount",
+            "SeverityLevel": "0"
+        },
+        "policyNonCompliantResourceAlertTrigger":{
+            "Operator":"GreaterThan",
+            "Threshold":"0"
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2018-05-01",
+            "name": "policyAlertsDeployment",
+            "resourceGroup": "[parameters('resourceGroupName')]",
+            "dependsOn": [],
+            "properties": {
+                "mode":"Incremental",
+                "template":{
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                        {
+                            "comments": "Azure Policy Non-Compliant Resource alert",
+                            "type": "microsoft.insights/scheduledQueryRules",
+                            "name": "[variables('policyNonCompliantResourceAlertSettings').name]",
+                            "apiVersion": "2018-04-16",
+                            "location": "[replace(reference(parameters('logAnalyticsWorkspaceResourceId'), '2015-11-01-preview', 'Full').location, ' ', '')]",
+                            "tags": {"[variables('alertTag')]": "Resource"},
+                            "scale": null,
+                            "properties":{
+                                "description": "[variables('policyNonCompliantResourceAlertSettings').description]",
+                                "enabled": "true",
+                                "source": {
+                                    "query": "[variables('policyNonCompliantResourceAlertSettings').Query]",
+                                    "dataSourceId": "[variables('policyNonCompliantResourceAlertSettings').SourceId]",
+                                    "queryType":"[variables('policyNonCompliantResourceAlertSettings').Type]"
+                                },
+                                "schedule":{
+                                    "frequencyInMinutes": "[variables('alertSchedule').Frequency]",
+                                    "timeWindowInMinutes": "[variables('alertSchedule').Time]"
+                                },
+                                "action":{
+                                    "odata.type": "Microsoft.WindowsAzure.Management.Monitoring.Alerts.Models.Microsoft.AppInsights.Nexus.DataContracts.Resources.ScheduledQueryRules.AlertingAction",
+                                    "severity":"[variables('policyNonCompliantResourceAlertSettings').SeverityLevel]",
+                                    "aznsAction":{
+                                        "actionGroup": "[array(variables('policyNonCompliantResourceAlertSettings').actiongroup)]",
+                                        "emailSubject":"Azure Policy Non-Compliant Resource: Detected Resource Group without required tags"
+                                    },
+                                    "trigger":{
+                                        "thresholdOperator":"[variables('policyNonCompliantResourceAlertTrigger').Operator]",
+                                        "threshold":"[variables('policyNonCompliantResourceAlertTrigger').Threshold]"
+                                    }
+                                }
+                            },
+                            "dependsOn": []
+                        }
+                    ],
+                    "outputs": {}
+                }
+            }
+        }
+    ]
+}

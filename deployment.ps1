@@ -1,32 +1,60 @@
+###########################################################################
+###
+### Description: PowerShell script performing the following actions:
+###
+###     - Creating an Azure policy definition to audit when resource 
+###     groups (RG) are deployed with missing tags
+###     - Assigning this Azure policy definition for two required tags 
+###     defined by the user
+###     - Assigning the Azure policy definition "Append a tag and its 
+###     value from the resource group" for the two user defined tags
+###     - Creating a resource group
+###     - Creating a Log Analytic Workspace to connect with the 
+###     Azure Activity Logs
+###     - Creating an Alert Action Group and an Alert Rule to send emails 
+###     when RG are not compliant
+###
+### Author: Nicolas Wipfli
+### Date: Sunday Mar 29, 2020
+###
+###########################################################################
+
+
 ##
-## Variables to modify
+## Variables to update with your values
 ##
-$subscriptionName = "Personal Subscription"   # Provide the name of your subscription
-$tag1Name = "creator"
-$tag1Value = "n.wipfli@abissa.ch"
-$tag2Name = "environment"
-$tag2Value = "prod"
-$Location = "switzerlandnorth"
-$ResourceGroup = "rg-taggingcompliance-prod-" + $Location  # Resource group for the Log Analytic workspace
-$WorkspaceName = "log-azureactivity-prod-" + $Location #+ (Get-Random -Maximum 99)
-$emailReceiverName = "Nicolas Wipfli"
-$emailAddress = "n.wipfli@abissa.ch"
-$actionGroupName = "Non Compliant Tagging"
-$actionGroupShortName = "TagNOK"
-##
+$subscriptionName = "you_subscription_name"   # Provide the name of your subscription (ie: MySubscription)
+$tagsArray = @(                # Define your tag's key-values
+    @("creator","nwipfli"),
+    @("environment","test")
+)
+$Location = "azure_region"  # Azure region (ie: switzerlandnorth)
+$ResourceGroup = "resource_group_name" + $Location  # Resource group for the Log Analytic workspace
+$WorkspaceName = "workspace_name" + $Location
+$emailReceiverName = "my_name"
+$emailAddress = "my_email@test.com"
+$actionGroupName = "action_group_name"
+$actionGroupShortName = "action_group_shortname"
 
 ##
 ## Constants
 ##
 $tag = New-Object "System.Collections.Generic.Dictionary``2[System.String,System.String]"
-$tag.Add($tag1Name,$tag1Value)
-$tag.Add($tag2Name,$tag2Value)
+$tagCount = $tagsArray.Length
+$count = 0
+while ($count -ne $tagCount) {
+    $tag.Add($tagsArray[$count][0],$tagsArray[$count][1])
+    $count++
+}
 $subscription = Get-AzSubscription -SubscriptionName $subscriptionName
+
+##
+## Create and assign the policy definition(s) for missing specific tags
 ##
 
-# Create the policy definition for missing specific tags in resource groups
-Write-Output "Creating the policy definition 'Audit resource groups missing tags'"
-$definition = New-AzPolicyDefinition `
+# Policy for the resource groups
+Write-Host "Creating the policy definition 'Audit resource groups missing tags'..." -foregroundcolor Red
+$resourceGroupDefinition = New-AzPolicyDefinition `
 -Name "audit-resourceGroup-tags" `
 -DisplayName "Audit resource groups missing tags" `
 -description "Audit resource groups that doesn't have particular tag" `
@@ -35,101 +63,113 @@ $definition = New-AzPolicyDefinition `
 -Mode All `
 -Metadata '{"category":"Tags"}'
 
-# Assign the policy definition with the tags
-Write-Output "Creating the policy assignment for the tag '$tag1Name'"
-New-AzPolicyAssignment `
--Name "Audit Missing $tag1Name Tag" `
--DisplayName "Audit resource groups missing $tag1Name tag" `
--PolicyDefinition $definition `
--tagName $tag1Name `
--Scope "/subscriptions/$($Subscription.Id)"
+# Policy for the resources (section currently disabled)
 
-Write-Output "Creating the policy assignment for the tag '$tag2Name'"
-New-AzPolicyAssignment `
--Name "Audit Missing $tag2Name Tag" `
--DisplayName "Audit resource groups missing $tag2Name tag" `
--PolicyDefinition $definition `
--tagName $tag2Name `
--Scope "/subscriptions/$($Subscription.Id)"
+<#Write-Host "Creating the policy definition 'Audit resources missing tags'..." -foregroundcolor Red
+$resourceDefinition = New-AzPolicyDefinition `
+-Name "audit-resource-tags" `
+-DisplayName "Audit resources missing tags" `
+-description "Audit resources that doesn't have particular tag" `
+-Policy './auditResourceTag.rules.json' `
+-Parameter './auditResourceTag.parameters.json' `
+-Mode All `
+-Metadata '{"category":"Tags"}'#>
 
-# Assign the "Append a tag and its value from the resource group" policy for specific tags
-Write-Output "Assigning the definition 'Append a tag and its value from the resource group' for tags '$tag1Name', '$tag2Name'"
+# Assign the policy definitions with the tags
+$count = 0
+while ($count -ne $tagCount) {
+    $tagKey = $tagsArray[$count][0]
+    Write-Host "Assigning the policy definition(s) for the tag $tagKey..." -foregroundcolor Red
+
+    New-AzPolicyAssignment `
+    -Name "Audit Missing $tagKey Tag on resource groups" `
+    -DisplayName "Audit resource groups missing $tagKey tag" `
+    -PolicyDefinition $resourceGroupDefinition `
+    -tagName $tagKey `
+    -Scope "/subscriptions/$($Subscription.Id)"
+
+    # Section currently disabled
+
+    <#New-AzPolicyAssignment `
+    -Name "Audit Missing $tagKey Tag on resources" `
+    -DisplayName "Audit resources missing $tagKey tag" `
+    -PolicyDefinition $resourceDefinition `
+    -tagName $tagKey `
+    -Scope "/subscriptions/$($Subscription.Id)"#>
+
+    $count++
+}
+
+##
+## Assigning the built-in "Append a tag and its value from the resource group" policy definition for the tags
+##
+
 $definition = Get-AzPolicyDefinition | Where-Object { $_.Properties.DisplayName -eq "Append a tag and its value from the resource group" }
-
-New-AzPolicyAssignment `
--Name "Append $tag1Name and its value from the resource group" `
--DisplayName "Append $tag1Name and its value from the resource group" `
--PolicyDefinition $definition `
--tagName $tag1Name `
--Scope "/subscriptions/$($Subscription.Id)"
 
-New-AzPolicyAssignment `
--Name "Append $tag2Name and its value from the resource group" `
--DisplayName "Append $tag2Name and its value from the resource group" `
--PolicyDefinition $definition `
--tagName $tag2Name `
--Scope "/subscriptions/$($Subscription.Id)"
+$count = 0
+while ($count -ne $tagCount) {
+    $tagKey = $tagsArray[$count][0]
+    Write-Host "Assigning the definition 'Append a tag and its value from the resource group' for the tag $tagKey..." -foregroundcolor Red
 
-# Create the resource group if needed
+    New-AzPolicyAssignment `
+    -Name "Append tag $tagKey and its value from the resource group" `
+    -DisplayName "Append tag $tagKey and its value from the resource group" `
+    -PolicyDefinition $definition `
+    -tagName $tagKey `
+    -Scope "/subscriptions/$($Subscription.Id)"
+
+    $count++
+}
+
+##
+## Create the resource group if needed
+##
+
 try {
 
     $RG = Get-AzResourceGroup -Name $ResourceGroup -ErrorAction Stop
     $ExistingLocation = $RG.Location
-    Write-Output "Resource group $ResourceGroup in region $ExistingLocation already exists."
-    Write-Output "No further action required, script quitting."
+    Write-Host "Resource group $ResourceGroup in region $ExistingLocation already exists." -foregroundcolor Red
 
 }
 catch {
 
-    Write-Output "Creating the resource group '$ResourceGroup'"
+    Write-Host "Creating the resource group '$ResourceGroup'" -foregroundcolor Red
     New-AzResourceGroup -Name $ResourceGroup -Location $Location -Tag $tag
 
 }
 
-# Create a new Log Analytics workspace if needed
+##
+## Create the Log Analytics workspace
+## The connection with the Activity Log is performed at the end of this script
+##
+
 try {
 
     $Workspace = Get-AzOperationalInsightsWorkspace -Name $WorkspaceName -ResourceGroupName $ResourceGroup  -ErrorAction Stop
     $ExistingLocation = $Workspace.Location
-    Write-Output "Workspace named $WorkspaceName in region $ExistingLocation already exists."
-    Write-Output "No further action required, script quitting."
+    Write-Host "Workspace named $WorkspaceName in region $ExistingLocation already exists." -foregroundcolor Red
 
 } catch {
 
-    Write-Output "Creating new workspace named $WorkspaceName in region $Location..."
+    Write-Host "Creating new workspace named $WorkspaceName in region $Location..." -foregroundcolor Red
     # Create the new workspace for the given name, region, and resource group
-    $Workspace = New-AzOperationalInsightsWorkspace -Location $Location -Name $WorkspaceName -Sku Standard -ResourceGroupName $ResourceGroup
+    $Workspace = New-AzOperationalInsightsWorkspace -Location $Location -Name $WorkspaceName -Sku Standard -ResourceGroupName $ResourceGroup -Tag $tag
 
 }
 
-# Connect the Activity Log to the workspace
-Write-Output "Connecting the Activity Logs to the workspace"
-New-AzOperationalInsightsAzureActivityLogDataSource -ResourceGroupName $ResourceGroup -Name "Activity Log" -WorkspaceName $WorkspaceName -SubscriptionId ($subscription).Id
-
 ##
-## Creating the Azure Monitor action group
+## Create the Action Group and Alert Rule
 ##
 
-# Create a new Action Group Email receiver
+# Create a new Action Group Email receiver and Action Group
+Write-Host "Creating the Alert Action Group..." -foregroundcolor Red
 $emailReceiver = New-AzActionGroupReceiver -Name $emailReceiverName -EmailReceiver -EmailAddress $emailAddress
-
-# Create a new Action Group
 $actionGroup = Set-AzActionGroup -Name $actionGroupName -ResourceGroup $ResourceGroup -ShortName $actionGroupShortName -Receiver $emailReceiver -Tag $tag
 
+# Launching an Azure deployment template to create the Alert Rule based on a Log search query
+new-azdeployment -Name sampeTest -Location $Location -TemplateFile ./azurealertdeploy.json -logAnalyticsWorkspaceResourceId $Workspace.ResourceId -resourceGroupName $ResourceGroup -actionGroupId $actionGroup.Id
 
-
-
-$source = New-AzScheduledQueryRuleSource -Query "AzureActivity | where Category == 'Policy' and Level != 'Informational' | extend p=todynamic(Properties) | extend policies=todynamic(tostring(p.policies)) | mvexpand policy = policies | where p.isComplianceCheck == 'False'" -DataSourceId "$Workspace.ResourceId"
-
-$schedule = New-AzScheduledQueryRuleSchedule -FrequencyInMinutes 5 -TimeWindowInMinutes 5
-
-$metricTrigger = New-AzScheduledQueryRuleLogMetricTrigger -ThresholdOperator "GreaterThan" -Threshold 0 -MetricTriggerType "Consecutive" -MetricColumn "_ResourceId"
-
-$triggerCondition = New-AzScheduledQueryRuleTriggerCondition -ThresholdOperator "GreaterThan" -Threshold 0 -MetricTrigger $metricTrigger
-
-$aznsActionGroup = New-AzScheduledQueryRuleAznsActionGroup -ActionGroup "$actionGroup.Id" -EmailSubject "New Resource Group with missing tags" -CustomWebhookPayload "{ `"alert`":`"#alertrulename`", `"IncludeSearchResults`":true }"
-
-$alertingAction = New-AzScheduledQueryRuleAlertingAction -AznsAction $aznsActionGroup -Severity "3" -Trigger $triggerCondition
-
-New-AzScheduledQueryRule -ResourceGroupName $ResourceGroup -Location $Location -Action $alertingAction -Enabled $true -Description "Alert description" -Schedule $schedule -Source $source -Name "Alert Name"
-
+# Connect the Activity Log to the workspace
+Write-Host "Connecting the Activity Logs to the workspace $WorkspaceName..." -foregroundcolor Red
+New-AzOperationalInsightsAzureActivityLogDataSource -ResourceGroupName $ResourceGroup -Name "Activity Log" -WorkspaceName $WorkspaceName -SubscriptionId ($subscription).Id
